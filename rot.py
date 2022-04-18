@@ -59,9 +59,40 @@ def SE3(w, v, theta):
     #return np.around(e_twist_t, decimals=3)
     return e_twist_t
 
-if False:
+# Create a 6x6 Adj representation of a 4x4 SE3 matrix for transforming
+# twists
+def adjoint(T):
+    R = T[:3,:3]
+    p = T[:3,-1]
+    adj = np.zeros((6,6))
+    adj[:3,:3] = R # Upper left is R
+    adj[3:,3:] = R # Lower right is also R
+    adj[3:,:3] = so3(p) @ R # Lower left is so3(p) mmul R
+    return adj
+
+# Create a 6d screw vector from a rotation axis `s`, the vector to any point
+# along the rotation axis `q`, a rotation displacement `theta`, and velocity
+# along the axis `pitch`
+def screw(s, q, pitch, rotation: bool = False):
+    pitch = float(pitch)
+    q = np.array(q, dtype=np.float64)
+    w = np.array(s, dtype=np.float64)
+
+    if rotation:
+        v = np.cross(-np.array(s), q) + pitch * np.array(s)
+        v /= np.linalg.norm(w)
+        w /= np.linalg.norm(w)
+    else:
+        v = np.array(w) * pitch
+        v /= np.linalg.norm(v)
+        w = np.zeros(3)
+    return w, v
+
+if True:
     # Problem 1 b
     M = T(np.eye(3), [0, 2, 1])
+    print('Problem 1 initial transform:')
+    print(M)
 
     theta1 = 0
     theta2 = np.pi/2
@@ -73,7 +104,7 @@ if False:
     eS3 = SE3([0, 0, 1], [2, 0, 0], theta3)
     eS4 = SE3([0, 0, 0], [0, 0, 1], theta4)
 
-    print('Space screw result:')
+    print('Problem 1 space screw result:')
     S = eS1 @ eS2 @ eS3 @ eS4 @ M
     print(S)
 
@@ -82,75 +113,52 @@ if False:
     eB3 = SE3([0, 0, 1], [0, 0, 0,], theta3)
     eB4 = SE3([0, 0, 0], [0, 0, 1,], theta4)
 
-    print('Body screw result:')
+    print('Problem 1 body screw result:')
     B = M @ eB1 @ eB2 @ eB3 @ eB4
     print(B)
 
 if True:
     # Problem 2
     M = T(R_x(np.pi/2) @ R_y(np.pi), [0, 3, 2])
+    print('Problem 2 initial transform M:')
     print(M)
 
     theta1 = np.pi/2
     theta2 = np.pi/2
     theta3 = 1
+    S1 = screw([0, 0, 1], [0, 0, 0], 0, True)
+    S2 = screw([1, 0, 0], [0, 0, 2], 0, True)
+    S3 = screw([0, 1, 0], [0, 0, 2], 1, False)
 
-    eS1 = SE3([0, 0, 1], [0, 0, 0], theta1)
-    eS2 = SE3([1, 0, 0], [0, 2, 0], theta2)
-    eS3 = SE3([0, 0, 0], [0, 1, 0], theta3)
+    eS1 = SE3(*S1, theta1)
+    eS2 = SE3(*S2, theta2)
+    eS3 = SE3(*S3, theta3)
 
-    print('Space screw result:')
+    print('Problem 2 space screw result:')
     S = eS1 @ eS2 @ eS3 @ M
     print(np.around(S))
 
-    eB1 = SE3([0, 1, 0], [3, 0, 0,], theta1)
-    eB2 = SE3([-1, 0, 0], [0, 3, 0,], theta2)
-    eB3 = SE3([0, 0, 0], [0, 0, 1], theta3)
+    B1 = screw([0, 1, 0], [0, 0, -3], 0, True)
+    B2 = screw([-1, 0, 0], [0, 0, -3], 0, True)
+    B3 = screw([0, 0, 1], [0, 0, 1], 1, False)
+    eB1 = SE3(*B1, theta1)
+    eB2 = SE3(*B2, theta2)
+    eB3 = SE3(*B3, theta3)
 
-    print('Body screw result:')
+    print('Problem 2 body screw result:')
     B = M @ eB1 @ eB2 @ eB3
     print(np.around(B))
 
+    print("Space frame Jacobian:")
+    JS1 = np.hstack(S1)
+    JS2 = adjoint(eS1) @ np.hstack(S2)
+    JS3 = adjoint(eS1 @ eS2) @ np.hstack(S3)
+    JS = np.vstack([JS1, JS2, JS3]).T
+    print(np.around(JS))
 
-exit(0)
-
-def screw(q, s, theta, pitch):
-    w = np.array(s) * theta
-    v = np.cross(-np.array(s) * theta, q) + pitch * np.array(s) * theta
-
-    if np.sum(np.abs(v[:3])) > 1e-6:
-        v /= np.linalg.norm(w[:3])
-        w /= np.linalg.norm(w[:3])
-    else:
-        raise NotImplementedError(q,s,theta,pitch)
-    return w, v
-
-# Problem 3.24
-t = 4
-
-q1 = np.zeros(3)
-s1 = [0, 0, 1] # Rotate about z
-theta1 = np.pi/4
-S1_w, S1_v = screw(q1, s1, theta1, 2)
-e_S1 = SE3(S1_w, S1_v, t*theta1)
-print(e_S1)
-
-q2 = np.array([0, 0, 10])
-s2 = [0, 1, 0]
-theta2 = np.pi/8
-S2_w, S2_v = screw(q2, s2, theta2, 0)
-e_S2 = SE3(S2_2, S2_v, t*theta2)
-print(e_S2)
-
-q3 = np.array([0, 5, 5])
-s3 = [1, 0, 0]
-theta3 = np.pi/4
-S3_w, S3_v = screw(q3, s3, theta3, 0)
-e_S3 = SE3(S3_w, S3_v, t*theta3)
-print(e_S3)
-
-T_sb = T(R_z(np.pi/2), [0, 8, 5])
-print(T_sb)
-
-T_sb_prime = e_S1 @ e_S2 @ e_S3 @ T_sb
-print('final:', T_sb_prime)
+    print("Body frame Jacobian:")
+    JB3 = np.hstack(B3)
+    JB2 = adjoint(np.linalg.inv(eB3)) @ np.hstack(B2)
+    JB1 = adjoint(np.linalg.inv(eB2 @ eB3)) @ np.hstack(B1)
+    JB = np.vstack([JB1, JB2, JB3]).T
+    print(np.around(JB))
