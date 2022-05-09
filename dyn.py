@@ -19,7 +19,7 @@ G_2 = Matrix([[4, 0, 0, 0, 0, 0],
 init_printing(use_latex='mathjax')
 VGV_1 = (V_1.T.multiply(G_1).multiply(V_1))
 VGV_2 = (V_2.T.multiply(G_2).multiply(V_2))
-K = 0.0 * (VGV_1 + VGV_2)[0]
+K = 0.5 * (VGV_1 + VGV_2)[0]
 P = m * g * (1 - cos(θ_2))
 Lagrange = K - P
 
