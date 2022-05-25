@@ -101,6 +101,7 @@ def pendulum_dynamics(
 
         ret = tau_ff_fast(*q, *q_dot, *q_ddot)
         return np.array(ret).flatten()
+        #return np.zeros(2)
 
     return compute_accelerations, compute_ff_torques
 
@@ -168,8 +169,8 @@ def animate_pendulum(q, L1: float = 1, L2: float = 1, ref=None):
 
     ani = animation.FuncAnimation(fig, update, interval=10, blit=True, repeat=True,
                         frames=np.linspace(0, len(q), num=len(q), endpoint=False))
-    writer = animation.writers['ffmpeg'](fps=100, metadata=dict(artist='Me'), bitrate=1800)
-    ani.save('traj.mp4', writer=writer)
+    #writer = animation.writers['ffmpeg'](fps=100, metadata=dict(artist='Me'), bitrate=1800)
+    #ani.save('traj.mp4', writer=writer)
     plt.show()
 
 def generate_quintic_traj(
@@ -279,40 +280,42 @@ T = 2
 traj = generate_quintic_traj(q_i, dq, ddq, q_f, dq, ddq, T)
 
 # Create the pendulum dynamics simulator starting at our initial state
-acceleration_dynamics, torque_ff = pendulum_dynamics()
+acceleration_dynamics, _ = pendulum_dynamics()
+_, torque_ff = pendulum_dynamics(_m_1=1.2, _m_2=1.2)
+
 sim = DoublePendulumSimulator(acceleration_dynamics, q_i, dq)
 
 # Create a PID controller with fairly stiff proportional gains
-pid = PID([1500, 1500], [0, 0], [50, 50])
+pid = PID([200, 200], [0, 0], [60, 60])
 
 dt = 0.005
 real_traj = []
 real_qacc = []
 us = []
 q_actual, q_dot_actual = q_i, dq
-for q_target, q_dot_target, q_ddot_target in [traj(t) for t in np.linspace(0, T, int(T/dt))]:
+t = 0
+for q_target, q_dot_target, q_ddot_target in [traj(t) for t in np.linspace(0, T, num=int(T/dt))]:
     err = q_target - q_actual
     vel_err = q_dot_target - q_dot_actual
 
-    u = pid.step(err, vel_err, dt) + torque_ff(q_target, q_dot_target, q_dot_target)
-    #u = torque_ff(q_target, q_dot_target, q_dot_target)
-    #u = np.zeros(2)
-    us += [u]
+    u = pid.step(err, vel_err, dt) + torque_ff(q_target, q_dot_target, q_ddot_target)
 
-    q_actual, q_dot_actual = sim.step(u)
+    q_actual, q_dot_actual = sim.step(u, dt=dt)
+
     real_qacc += [sim.q_ddot]
-
     real_traj += [q_actual]
+    us += [u]
+    t+=1
 
 # The reference trajectory
 qs = np.array([x for x,_,_ in [traj(t) for t in np.linspace(0, T, num=int(T/dt))]])
 qdds = np.array([x for _,_,x in [traj(t) for t in np.linspace(0, T, num=int(T/dt))]])
 
 import matplotlib.pyplot as plt
-plt.plot(np.array(real_qacc)[:,0], label='actual theta_ddot')
-plt.plot(qdds[:,0], label='reference theta_ddot')
-plt.legend()
-plt.show()
+#plt.plot(np.array(real_qacc)[:,0], label='actual theta_ddot')
+#plt.plot(qdds[:,0], label='reference theta_ddot')
+#plt.legend()
+#plt.show()
 
 plt.plot(np.array(real_traj)[:,0], label='actual theta_1')
 plt.plot(qs[:,0], label='reference theta_1')
@@ -324,11 +327,10 @@ plt.plot(qs[:,1], label='reference theta_2')
 plt.legend()
 plt.show()
 
-plt.plot(np.array(us), label='torques')
+plt.plot(np.array(np.array(us)[:,0]), label='torque (joint 1)')
+plt.plot(np.array(np.array(us)[:,1]), label='torque (joint 2)')
 plt.legend()
 plt.show()
 
-#animate_pendulum(qs)
-
 # Plot the actual dynamic trajectory and the reference trajectory for comparison
-#animate_pendulum(np.array(real_traj), ref=qs)
+animate_pendulum(np.array(real_traj), ref=qs)
