@@ -27,7 +27,7 @@ def pendulum_dynamics(
     K = 0.5 * m_1 * (sympy.diff(x_1, t)**2 + sympy.diff(y_1, t)**2) \
         + 0.5 * m_2 * (sympy.diff(x_2, t)**2 + sympy.diff(y_2, t)**2) \
         + 0.5 * I_1 * m_1 * sympy.diff(θ_1, t) ** 2 \
-        + 0.5 * I_2 * m_2 * sympy.diff(θ_2, t) ** 2
+        + 0.5 * I_2 * m_2 * (sympy.diff(θ_1,t) + sympy.diff(θ_2, t)) ** 2
 
     # Potential Energy
     P = g * (m_1 * y_1 + m_2 * y_2)
@@ -42,6 +42,7 @@ def pendulum_dynamics(
     tau = sympy.Matrix([tau_1, tau_2])
     qdd = sympy.Matrix([sympy.diff(sympy.diff(θ_1, t), t), sympy.diff(sympy.diff(θ_2, t), t)])
     q_ddot = LM.mass_matrix.inv() * (LM.forcing + tau)
+    ff_tau = LM.mass_matrix * qdd - LM.forcing
 
     # Substitute all the model parameters here for efficiency
     subs = [
@@ -56,11 +57,17 @@ def pendulum_dynamics(
         (g, _g),
     ]
     q_ddot = q_ddot.subs(subs)
+    ff_tau = ff_tau.subs(subs)
 
     from sympy.utilities.lambdify import lambdify
     q_ddot_fast  = lambdify(
         [θ_1, θ_2, sympy.diff(θ_1, t), sympy.diff(θ_2, t), tau_1, tau_2],
         q_ddot,
+    )
+
+    tau_ff_fast = lambdify(
+        [θ_1, θ_2, sympy.diff(θ_1, t), sympy.diff(θ_2, t), sympy.diff(sympy.diff(θ_1, t), t), sympy.diff(sympy.diff(θ_2, t), t)],
+        ff_tau,
     )
 
     def compute_accelerations(
@@ -79,49 +86,91 @@ def pendulum_dynamics(
         ret = q_ddot_fast(*q, *q_dot, *torques)
         return np.array(ret).flatten()
 
-    return compute_accelerations
+    def compute_ff_torques(
+            q,
+            q_dot,
+            q_ddot,
+    ):
+        """
+        Helper function to calculate feedforward torques given concrete
+        values for all the variables in the equations of motion
+        """
+        assert len(q) == 2
+        assert len(q_dot) == 2
+        assert len(q_ddot) == 2
 
-def animate_pendulum(q, L1: float = 1, L2: float = 1):
-   import matplotlib.animation as animation
-   import matplotlib.pyplot as plt
-   assert len(q.shape) == 2
-   assert q.shape[-1] == 2
-   
-   plt.rcParams["figure.figsize"] = 8,6
+        ret = tau_ff_fast(*q, *q_dot, *q_ddot)
+        return np.array(ret).flatten()
 
-   fig, ax = plt.subplots()
+    return compute_accelerations, compute_ff_torques
 
-   ax.axis([-3,3,-2,2])
-   
-   base, = ax.plot(0, 0, marker="o")
-   p1, = ax.plot(0, 1, marker="o")
-   p2, = ax.plot(0, 1, marker="o")
-   link1, = ax.plot([], [], color="crimson", zorder=4)
-   link2, = ax.plot([], [], color="crimson", zorder=4)
+def animate_pendulum(q, L1: float = 1, L2: float = 1, ref=None):
+    """
+    Code for animating a trajectory of pendulum configurations. Can plot a
+    second configuration trajectory if passed into 'ref'
+    """
+    import matplotlib.animation as animation
+    import matplotlib.pyplot as plt
+    assert len(q.shape) == 2
+    assert q.shape[-1] == 2
+    
+    plt.rcParams["figure.figsize"] = 8,6
 
-   def update(t):
-       t = int(t)
-       theta_1, theta_2 = q[t]
+    fig, ax = plt.subplots()
 
-       x_1 = np.sin(theta_1) * L1
-       y_1 = -np.cos(theta_1) * L1
+    ax.axis([-3,3,-2,2])
+    
+    base, = ax.plot(0, 0, marker="o")
+    p1, = ax.plot(0, 1, marker="o")
+    p2, = ax.plot(0, 1, marker="o")
+    link1, = ax.plot([], [], color="crimson", zorder=4)
+    link2, = ax.plot([], [], color="crimson", zorder=4)
 
-       x_2 = x_1 + np.sin(theta_1 + theta_2) * L2
-       y_2 = y_1 - np.cos(theta_1 + theta_2) * L2
-       
-       p1.set_data([x_1], [y_1])
-       p2.set_data([x_2], [y_2])
-       link1.set_data([0, x_1], [0, y_1])
-       link2.set_data([x_1, x_2], [y_1, y_2])
+    if ref is not None:
+        assert len(ref) == len(q)
+        ref_base, = ax.plot(0, 0, marker="x")
+        ref_p1, = ax.plot(0, 1, marker="x")
+        ref_p2, = ax.plot(0, 1, marker="x")
+        ref_link1, = ax.plot([], [], color="blue", zorder=4)
+        ref_link2, = ax.plot([], [], color="blue", zorder=4)
 
-       return p1, p2, link1, link2
+    def update(t):
+        t = int(t)
+        theta_1, theta_2 = q[t]
 
-   ani = animation.FuncAnimation(fig, update, interval=10, blit=True, repeat=True,
-                       frames=np.linspace(0, len(q), num=len(q), endpoint=False))
-   #writer = animation.writers['ffmpeg'](fps=15, metadata=dict(artist='Me'), bitrate=1800)
-   #ani.save('traj.mp4', writer=writer)
-   #return HTML(ani.to_jshtml()) 
-   plt.show()
+        x_1 = np.sin(theta_1) * L1
+        y_1 = -np.cos(theta_1) * L1
+
+        x_2 = x_1 + np.sin(theta_1 + theta_2) * L2
+        y_2 = y_1 - np.cos(theta_1 + theta_2) * L2
+        
+        p1.set_data([x_1], [y_1])
+        p2.set_data([x_2], [y_2])
+        link1.set_data([0, x_1], [0, y_1])
+        link2.set_data([x_1, x_2], [y_1, y_2])
+
+        if ref is not None:
+            ref_theta_1, ref_theta_2 = ref[t]
+
+            ref_x_1 = np.sin(ref_theta_1) * L1
+            ref_y_1 = -np.cos(ref_theta_1) * L1
+
+            ref_x_2 = ref_x_1 + np.sin(ref_theta_1 + ref_theta_2) * L2
+            ref_y_2 = ref_y_1 - np.cos(ref_theta_1 + ref_theta_2) * L2
+            ref_p1.set_data([ref_x_1], [ref_y_1])
+            ref_p2.set_data([ref_x_2], [ref_y_2])
+            ref_link1.set_data([0, ref_x_1], [0, ref_y_1])
+            ref_link2.set_data([ref_x_1, ref_x_2], [ref_y_1, ref_y_2])
+            return p1, p2, link1, link2, ref_p1, ref_p2, ref_link1, ref_link2
+
+        else:
+            return p1, p2, link1, link2
+
+    ani = animation.FuncAnimation(fig, update, interval=10, blit=True, repeat=True,
+                        frames=np.linspace(0, len(q), num=len(q), endpoint=False))
+    writer = animation.writers['ffmpeg'](fps=100, metadata=dict(artist='Me'), bitrate=1800)
+    ani.save('traj.mp4', writer=writer)
+    plt.show()
 
 def generate_quintic_traj(
         q_initial,
@@ -148,23 +197,32 @@ def generate_quintic_traj(
         dds_t = a[2] + 6 * a[3] * t + 12 * a[4] * t**2 + 20 * a[5] * t**3
 
         q_t = q_initial + s_t * (q_final - q_initial)
-        dq_t = (q_dot_final - q_dot_initial) * ds_t
-        ddq_t = (q_ddot_final - q_ddot_initial) * dds_t
+        dq_t = (q_final - q_initial) * ds_t
+        ddq_t = (q_final - q_initial) * dds_t
         return q_t, dq_t, ddq_t
-    return traj
 
     #import matplotlib.pyplot as plt
     #xs = np.linspace(0,T,num=50)
-    #ys = np.array([_s(x_t) for x_t in xs])
-    #y_1 = ys[:,0]
-    #y_2 = ys[:,1]
-    #y_3 = ys[:,2]
-    #plt.plot(xs, y_1, label='s(t)')
-    #plt.plot(xs, y_2, label='s\'(t)')
-    #plt.plot(xs, y_3, label='s\'\'(t)')
+    #ys = np.array([traj(x_t) for x_t in xs])
+    #y_1 = ys[:,0,0]
+    #y_2 = ys[:,1,0]
+    #y_3 = ys[:,2,0]
+    #plt.plot(xs, y_1, label='s(t) θ_1')
+    #plt.plot(xs, y_2, label='s\'(t) θ_1')
+    #plt.plot(xs, y_3, label='s\'\'(t) θ_1')
     #plt.legend()
     #plt.show()
-    #_s(1)
+
+    #y_1 = ys[:,0,1]
+    #y_2 = ys[:,1,1]
+    #y_3 = ys[:,2,1]
+    #plt.plot(xs, y_1, label='s(t) θ_2')
+    #plt.plot(xs, y_2, label='s\'(t) θ_2')
+    #plt.plot(xs, y_3, label='s\'\'(t) θ_2')
+    #plt.legend()
+    #plt.show()
+
+    return traj
 
 class DoublePendulumSimulator:
     def __init__(self, equations_of_motion, initial_q, initial_q_dot):
@@ -178,22 +236,99 @@ class DoublePendulumSimulator:
         q_ddot = self.equations_of_motion(torques, self.q, self.q_dot)
 
         # Euler integration to find position and velocity
+        self.q_ddot = q_ddot
         self.q_dot = self.q_dot + dt * q_ddot
         self.q = self.q + dt * self.q_dot
         self.t += dt
         
         return self.q, self.q_dot
 
-q_i = np.array([np.pi, np.pi/4])
-q_f = np.array([np.pi/4, np.pi/2])
-dq = np.zeros(2)
-ddq = np.zeros(2)
-T = 2
-traj = generate_quintic_traj(q_i,dq,ddq,q_f,dq,ddq, 2)
+class PID:
+    """
+    No-frills PID controller
+    """
+    def __init__(self, Kp, Ki, Kd):
+        assert len(Kp) == len(Ki)
+        assert len(Kp) == len(Kd)
 
-qs = np.array([x for x,_,_ in [traj(t) for t in np.linspace(0, T, num=50)]])
+        self.Kp = np.array(Kp)
+        self.Ki = np.array(Ki)
+        self.Kd = np.array(Kd)
+        self.integral = np.zeros(self.Kp.shape)
+
+    def step(self, error, velocity_error, dt):
+        self.integral += error * dt
+        return self.Kp * error + self.Ki * self.integral + self.Kd * velocity_error
+
+# The starting configuration
+q_i = np.array([-np.pi/4, 0])
+
+# The ending configuration
+q_f = np.array([np.pi/4, np.pi/2])
+
+# The starting and ending joint velocities
+dq = np.zeros(2)
+
+# The starting and ending joint accelerations
+ddq = np.zeros(2)
+
+# The length of our trajectory in seconds
+T = 2
+
+# The function which gives us the pendulum configuration at time t \in [0, T]
+traj = generate_quintic_traj(q_i, dq, ddq, q_f, dq, ddq, T)
+
+# Create the pendulum dynamics simulator starting at our initial state
+acceleration_dynamics, torque_ff = pendulum_dynamics()
+sim = DoublePendulumSimulator(acceleration_dynamics, q_i, dq)
+
+# Create a PID controller with fairly stiff proportional gains
+pid = PID([1500, 1500], [0, 0], [50, 50])
+
+dt = 0.005
+real_traj = []
+real_qacc = []
+us = []
+q_actual, q_dot_actual = q_i, dq
+for q_target, q_dot_target, q_ddot_target in [traj(t) for t in np.linspace(0, T, int(T/dt))]:
+    err = q_target - q_actual
+    vel_err = q_dot_target - q_dot_actual
+
+    u = pid.step(err, vel_err, dt) + torque_ff(q_target, q_dot_target, q_dot_target)
+    #u = torque_ff(q_target, q_dot_target, q_dot_target)
+    #u = np.zeros(2)
+    us += [u]
+
+    q_actual, q_dot_actual = sim.step(u)
+    real_qacc += [sim.q_ddot]
+
+    real_traj += [q_actual]
+
+# The reference trajectory
+qs = np.array([x for x,_,_ in [traj(t) for t in np.linspace(0, T, num=int(T/dt))]])
+qdds = np.array([x for _,_,x in [traj(t) for t in np.linspace(0, T, num=int(T/dt))]])
+
+import matplotlib.pyplot as plt
+plt.plot(np.array(real_qacc)[:,0], label='actual theta_ddot')
+plt.plot(qdds[:,0], label='reference theta_ddot')
+plt.legend()
+plt.show()
+
+plt.plot(np.array(real_traj)[:,0], label='actual theta_1')
+plt.plot(qs[:,0], label='reference theta_1')
+plt.legend()
+plt.show()
+
+plt.plot(np.array(real_traj)[:,1], label='actual theta_2')
+plt.plot(qs[:,1], label='reference theta_2')
+plt.legend()
+plt.show()
+
+plt.plot(np.array(us), label='torques')
+plt.legend()
+plt.show()
 
 #animate_pendulum(qs)
 
-sim = DoublePendulumSimulator(pendulum_dynamics(), q_i, dq)
-animate_pendulum(np.array([x for x, _ in [sim.step(np.zeros(2)) for _ in range(5000)]]))
+# Plot the actual dynamic trajectory and the reference trajectory for comparison
+#animate_pendulum(np.array(real_traj), ref=qs)
